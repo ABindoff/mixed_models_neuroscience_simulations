@@ -119,9 +119,11 @@ anova(m4)
 
 # we can see that m3 and m4 overestimate degrees of freedom
 # not such a problem when we KNOW that there is an effect, right?
-# but what if we KNOW that there ISN'T?
+# but what if we KNOW that the effect is really, really tiny,
+# like the sort of effect that is more likely to do with protocol
+# than actual treatment?
 
-d <- sim.mm(replicates = 10, treatment = 1e-16)
+d <- sim.mm(replicates = 10, treatment = 0.01)
 plot.sim(d)
 
 # recover fixed and random parameters using `lmer`
@@ -135,13 +137,36 @@ m2 <- lmer(y2 ~ treatment + (treatment|animalid), data = d)
 ranef(m2)
 fixef(m2)  
 
-anova(m1, ddf = "Kenward-Roger")  # justifiably reject null
+anova(m1, ddf = "Kenward-Roger")  
 anova(m2, ddf = "Kenward-Roger")  
 
-m3 <- lm(y1 ~ treatment, data = d)
-anova(m3)
-m4 <- lm(y2 ~ treatment, data = d)
-anova(m4)
+# our estimates are very good, and arguably, we correctly reject the null
+
+# repeat the experiment with a very large number of replicates
+d <- sim.mm(replicates = 500, treatment = 0.05)
+plot.sim(d)
+
+# recover fixed and random parameters using `lmer`
+# y1
+m1 <- lmer(y1 ~ treatment + (treatment|animalid), data = d)
+ranef(m1)
+fixef(m1)  # so far, so good
+
+
+anova(m1, ddf = "Kenward-Roger")  # fail to reject null
+anova(lm(y1 ~ treatment, data = d))  # confidently reject null
+
+# Depending on which way you look at it, we should reject the null - it's just a tiny, tiny effect
+# but it's 3 animals...
+# what are the degrees of freedom in the ANOVA table for the single-level regression? 
+# Does that look right?
+
+# Most of the time our data suffer from errors that aren't perfectly centred around the mean
+# what happens if there is absolutely NO EFFECT at all?
+
+
+
+
 
 
 
