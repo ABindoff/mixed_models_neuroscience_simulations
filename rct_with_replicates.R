@@ -42,7 +42,7 @@ p3 <- list(NULL)
 p4 <- list(NULL)
 
 for(j in 1:10){
-  replicates <- data.frame(replicate = c(1:(j*9-6)))
+  replicates <- data.frame(replicate = c(1:(j*9-7)))
   d <- expand.grid.df(replicates, animals, conditions)
   d %<>% filter(xor(animal.id %nin% c("01", "02", "03"), condition == "exp")) %>% # balanced RCT
     mutate(y.hat = random.effect + fixed.effect)
@@ -51,7 +51,7 @@ for(j in 1:10){
   p3[[j]] <- list()
   p4[[j]] <- list()
   
-  for(i in 1:500){
+  for(i in 1:100){
     d1 <- d %>% mutate(y = y.hat + rnorm(nrow(d), 0, 1))
     a1 <- anova(lm(y ~ condition, data = d1))
     #a2 <- anova(lm(y ~ condition/animal.id, data = d1))
@@ -68,5 +68,5 @@ for(j in 1:10){
 lapply(p1, function(x) mean(x < .05))
 lapply(p4, function(x) mean(x < .05))
 
-
-hist(unlist(p3))
+hist(unlist(p1), breaks = 20)
+hist(unlist(p4), breaks = 20)
