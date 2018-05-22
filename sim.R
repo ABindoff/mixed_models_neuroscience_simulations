@@ -71,7 +71,7 @@ plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, f
 # for each trial, choose quasi-random parameters
 # estimate Type II error rate over a range of effect sizes
 
-n.sims <- 500
+n.sims <- 2000
 n.replicates <- floor(runif(n.sims, 6, 40)/2)*2 # even number between 6 and 40
 n.pseudo <- sample(c(2:18), n.sims, replace = T)
 sd.error <- 1
@@ -103,37 +103,45 @@ sims.meta$lm <- x[,1]
 sims.meta$lmer <- x[,2]
 sims.meta$lm_type2 <- sims.meta$lm >= .05
 
-ggplot(sims.meta, aes(x = factor(n.replicates), y = factor(n.pseudo), fill = lm)) +
-  geom_raster(interpolate = T, alpha = 4/5) +
+ggplot(sims.meta, aes(x = factor(n.replicates), y = factor(fixed.effects), fill = lm)) +
+  geom_raster(interpolate = F, alpha = 4/5) +
   scale_fill_viridis(discrete = F, begin = 0.05, end = 0.95)
 
 ggplot(sims.meta, aes(x = factor(fixed.effects), y = n.pseudo, fill = factor(lm_type2))) +
   geom_boxplot()
 
 p.pseudo.lm <- ggplot(sims.meta, aes(x = n.pseudo, y = lm, colour = factor(fixed.effects))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.rep.lm <- ggplot(sims.meta, aes(x = n.replicates, y = lm, colour = factor(fixed.effects))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.pseudo.lmer <- ggplot(sims.meta, aes(x = n.pseudo, y = lmer, colour = factor(fixed.effects))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.rep.lmer <- ggplot(sims.meta, aes(x = n.replicates, y = lmer, colour = factor(fixed.effects))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 grid.arrange(p.pseudo.lm, p.pseudo.lmer, p.rep.lm, p.rep.lmer, ncol = 2)
 
 p.pseudo.lm <- ggplot(sims.meta, aes(x = n.pseudo, y = lm, colour = factor(sd.random))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.rep.lm <- ggplot(sims.meta, aes(x = n.replicates, y = lm, colour = factor(sd.random))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.pseudo.lmer <- ggplot(sims.meta, aes(x = n.pseudo, y = lmer, colour = factor(sd.random))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 p.rep.lmer <- ggplot(sims.meta, aes(x = n.replicates, y = lmer, colour = factor(sd.random))) +
-  geom_smooth(method = "lm") 
+  geom_smooth(method = "lm") +
+  ylim(0,1)
 
 grid.arrange(p.pseudo.lm, p.pseudo.lmer, p.rep.lm, p.rep.lmer, ncol = 2)
