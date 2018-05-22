@@ -6,6 +6,7 @@ library(gridExtra)
 library(lmerTest)
 library(viridis)
 library(ggbeeswarm)
+library(purrr)
 
 # choose a colour-blind friendly pallette 
 ggplot <- function(...) ggplot2::ggplot(...) + scale_colour_viridis(discrete = T, begin = 0.05, end = 0.95) + scale_fill_viridis(discrete = T, end = 0.5)
@@ -33,25 +34,26 @@ expand.grid.df <- function(...) Reduce(function(...) merge(..., by=NULL), list(.
 # if random.assignment = F, will simulate data from a nested (split-plot) design
 # so there will be twice as many observations (need to consider this if estimating
 # the power of two different designs)
-sim.mm <- function(n.replicates = 4,
+sim.mm <- function(...,
+                   n.replicates = 4,
                    sd.random = 0.5,
-                   fixed.effects = c(0, 0),
+                   fixed.effects = 0,
                    n.pseudo = 3,
                    random.assignment = T,
                    sd.error = NULL){
   animals <- data.frame(animal.id = as.factor(seq(n.replicates)),
                         random.effect = rnorm(n.replicates, 0, sd.random))
   conditions <- data.frame(condition = c("contr", "exp"),
-                           fixed.effect = fixed.effects)
+                           fixed.effect = c(0,fixed.effects))
   pseudoreplicate <- data.frame(pseudoreplicate = c(1:n.pseudo))
   d <- expand.grid.df(pseudoreplicate, animals, conditions)
   if(random.assignment){
-    i <- sample(unique(d$animal.id), floor(n.replicates/2), replace = FALSE)
+    i <- sample(unique(d$animal.id), n.replicates/2, replace = FALSE)
     d %<>% filter(xor(animal.id %nin% i, condition == "exp"))
   }
   d %<>% mutate(y.hat = random.effect + fixed.effect)
   if(!is.null(sd.error)){
-    d %<>% mutate(y = scale(y.hat + rnorm(nrow(d), 0, sd.error))) %>%
+    d %<>% mutate(y = y.hat + rnorm(nrow(d), 0, sd.error)) %>%
       group_by(animal.id, condition) %>%
       mutate(y.mean = mean(y))
   }
@@ -59,4 +61,34 @@ sim.mm <- function(n.replicates = 4,
 }
 
 # example
-plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, fixed.effects = c(0, 3)))
+plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, fixed.effects = 2))
+
+# now we have a method of simulating data with theta parameters (and a method of plotting should we need to)
+# we can explore the parameter space and see what effect modelling approach has on Type 1 and Type 2 error
+# rates
+
+# consider the case of the randomized controlled trial to begin with
+# for each trial, choose quasi-random parameters
+
+n.sims <- 100
+n.replicates <- floor(runif(n.sims, 6, 40)/2)*2 # even number between 6 and 40
+n.pseudo <- sample(c(1:18), n.sims, replace = T)
+sd.error <- 1
+random.assignment = TRUE
+sd.random <- sample(c(0.5, 1), n.sims, replace = T)
+fixed.effects <- sample(c(0.1, 0.5, 1, 2), n.sims, replace = T)
+
+sims.meta <- data.frame(n.replicates = n.replicates,
+                   n.pseudo = n.pseudo,
+                   sd.error = sd.error,
+                   random.assignment = random.assignment,
+                   sd.random = sd.random,
+                   fixed.effects = fixed.effects)
+
+sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
+
+# let's have a look at the first of these simulations just to be sure nothing went wrong
+plot.sim(sims[[1L]]) 
+sims.meta[1,]
+
+
