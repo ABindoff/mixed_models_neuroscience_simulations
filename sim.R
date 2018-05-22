@@ -69,13 +69,14 @@ plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, f
 
 # consider the case of the randomized controlled trial to begin with
 # for each trial, choose quasi-random parameters
+# estimate Type II error rate over a range of effect sizes
 
-n.sims <- 100
+n.sims <- 500
 n.replicates <- floor(runif(n.sims, 6, 40)/2)*2 # even number between 6 and 40
-n.pseudo <- sample(c(1:18), n.sims, replace = T)
+n.pseudo <- sample(c(2:18), n.sims, replace = T)
 sd.error <- 1
 random.assignment = TRUE
-sd.random <- sample(c(0.5, 1), n.sims, replace = T)
+sd.random <- sample(c(0.5, 1, 2), n.sims, replace = T)
 fixed.effects <- sample(c(0.1, 0.5, 1, 2), n.sims, replace = T)
 
 sims.meta <- data.frame(n.replicates = n.replicates,
@@ -87,8 +88,52 @@ sims.meta <- data.frame(n.replicates = n.replicates,
 
 sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
 
-# let's have a look at the first of these simulations just to be sure nothing went wrong
+# let's plot the first of these simulations and compare to the parameters as a sanity check
 plot.sim(sims[[1L]]) 
 sims.meta[1,]
 
+tests <- function(x){
+  m1 <- anova(lm(y ~ condition, data = x))
+  m2 <- anova(lmer(y ~ condition + (1|animal.id), data = x))
+  return(cbind(m1$`Pr(>F)`[1], m2$`Pr(>F)`))
+}
 
+x <- t(sapply(sims, tests))
+sims.meta$lm <- x[,1]
+sims.meta$lmer <- x[,2]
+sims.meta$lm_type2 <- sims.meta$lm >= .05
+
+ggplot(sims.meta, aes(x = factor(n.replicates), y = factor(n.pseudo), fill = lm)) +
+  geom_raster(interpolate = T, alpha = 4/5) +
+  scale_fill_viridis(discrete = F, begin = 0.05, end = 0.95)
+
+ggplot(sims.meta, aes(x = factor(fixed.effects), y = n.pseudo, fill = factor(lm_type2))) +
+  geom_boxplot()
+
+p.pseudo.lm <- ggplot(sims.meta, aes(x = n.pseudo, y = lm, colour = factor(fixed.effects))) +
+  geom_smooth(method = "lm") 
+
+p.rep.lm <- ggplot(sims.meta, aes(x = n.replicates, y = lm, colour = factor(fixed.effects))) +
+  geom_smooth(method = "lm") 
+
+p.pseudo.lmer <- ggplot(sims.meta, aes(x = n.pseudo, y = lmer, colour = factor(fixed.effects))) +
+  geom_smooth(method = "lm") 
+
+p.rep.lmer <- ggplot(sims.meta, aes(x = n.replicates, y = lmer, colour = factor(fixed.effects))) +
+  geom_smooth(method = "lm") 
+
+grid.arrange(p.pseudo.lm, p.pseudo.lmer, p.rep.lm, p.rep.lmer, ncol = 2)
+
+p.pseudo.lm <- ggplot(sims.meta, aes(x = n.pseudo, y = lm, colour = factor(sd.random))) +
+  geom_smooth(method = "lm") 
+
+p.rep.lm <- ggplot(sims.meta, aes(x = n.replicates, y = lm, colour = factor(sd.random))) +
+  geom_smooth(method = "lm") 
+
+p.pseudo.lmer <- ggplot(sims.meta, aes(x = n.pseudo, y = lmer, colour = factor(sd.random))) +
+  geom_smooth(method = "lm") 
+
+p.rep.lmer <- ggplot(sims.meta, aes(x = n.replicates, y = lmer, colour = factor(sd.random))) +
+  geom_smooth(method = "lm") 
+
+grid.arrange(p.pseudo.lm, p.pseudo.lmer, p.rep.lm, p.rep.lmer, ncol = 2)
