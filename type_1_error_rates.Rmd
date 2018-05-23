@@ -1,0 +1,336 @@
+---
+title: "Error rates in experimental neuroscience"
+author: "Bindoff, A."
+date: "23 May 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# choose a colour-blind friendly pallette 
+ggplot <- function(...) ggplot2::ggplot(...) + scale_colour_viridis(discrete = T, begin = 0.05, end = 0.95) + scale_fill_viridis(discrete = T, end = 0.5)
+
+# for reproducibility
+set.seed(1)
+```
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(gridExtra)
+library(lmerTest)
+library(viridis)
+library(ggbeeswarm)
+library(purrr)
+
+
+# `expand.grid.df` works like `expand.grid` but enables the user to define paired columns
+# it will return every combination of each argument
+expand.grid.df <- function(...) Reduce(function(...) merge(..., by=NULL), list(...))
+
+# `%nin%` "not in", e.g c("a", "b", "c") %nin% c("a", "c") will return "b"
+`%nin%` <- Negate(`%in%`)
+```
+
+### Plot method  
+
+This is a generic plot method to nicely format data from simulated experiments with simulated random effects.  
+
+
+```{r}
+# generic plot method
+plot.sim <- function(d){
+  ggplot(d, aes(x = condition, y = y, colour = animal.id, fill = animal.id)) +
+    geom_quasirandom(dodge.width = 1, alpha = 1/2, size = 2) +
+    geom_point(aes(y = y.mean, group = animal.id), colour = "black", size = 4, position = position_dodge(width = 1), shape = 3)
+} 
+```
+
+### Simulation method  
+
+`sim.mm` will simulate a dataset with parameters specifying the number of replicates, the number of pseudoreplicates, any number of fixed effects, and variance for random effects and the error term. It assumes one treatment and one control group. If the variance for the error term is not specified it will return a data frame without simulated data. If `random.assignment` = F it will return data from a nested (split-plot) design. `n.replicates` must be an even number.  
+
+```{r}
+# if sd.error is specified, `sim.mm` will simulate data with 
+# fixed and random effects and their parameters, otherwise
+# a data.frame is returned with y-hat but no residuals
+# if random.assignment = F, will simulate data from a nested (split-plot) design
+# so there will be twice as many observations (need to consider this if estimating
+# the power of two different designs)
+sim.mm <- function(...,
+                   n.replicates = 4,
+                   sd.random = 0.5,
+                   fixed.effects = 0,
+                   n.pseudo = 3,
+                   random.assignment = T,
+                   sd.error = NULL){
+  animals <- data.frame(animal.id = as.factor(seq(n.replicates)),
+                        random.effect = rnorm(n.replicates, 0, sd.random))
+  conditions <- data.frame(condition = c("contr", "exp"),
+                           fixed.effect = c(0,fixed.effects))
+  pseudoreplicate <- data.frame(pseudoreplicate = c(1:n.pseudo))
+  d <- expand.grid.df(pseudoreplicate, animals, conditions)
+  if(random.assignment){
+    i <- sample(unique(d$animal.id), n.replicates/2, replace = FALSE)
+    d %<>% filter(xor(animal.id %nin% i, condition == "exp"))
+  }
+  d %<>% mutate(y.hat = random.effect + fixed.effect)
+  if(!is.null(sd.error)){
+    d %<>% mutate(y = y.hat + rnorm(nrow(d), 0, sd.error)) %>%
+      group_by(animal.id, condition) %>%
+      mutate(y.mean = mean(y))
+  }
+  d
+}
+
+# example
+# plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, fixed.effects = 2))
+
+tests <- function(x, nested = FALSE){
+  m1 <- anova(lm(y ~ condition, data = x))
+  m2 <- anova(lmer(y ~ condition + (1|animal.id), data = x))
+  m3 <- m2
+  if(nested){
+    m3 <- tryCatch({anova(lmer(y ~ condition + (condition|animal.id), data = x))}, warning = function(war){
+      m3$`Pr(>F)` <- 1
+      return(m3)})
+  }
+  return(cbind(m1$`Pr(>F)`[1], m2$`Pr(>F)`, m3$`Pr(>F)`))
+}
+```
+
+It would also be helpful to have a method for plotting marginal error rates. `plot.error.rates` takes `data` and a `model` formula, then fits the model, generates predictions, and returns a `ggplot2` object for the first two model terms, assuming the first term is continuous and the second term is a factor.  
+
+```{r}
+plot.error.rates <- function(data, model){
+  m <- gam(model, data = data)
+  k <- apply(m$model, 2, unique)
+  d <- expand.grid(k[2:length(k)])
+  d$fit <- predict(m, d)
+  d[,1] <- factor(d[,1])
+  p <- ggplot(d, aes_string(x = names(d[2]), y = "fit", colour = names(d[1]))) +
+    geom_line(size = 1)
+}
+
+n.sims <- 25000
+```
+
+## Type 1 error rates - Randomized controlled trial
+
+Compare Type 1 error rates for fixed-effects linear model (`lm` function in R) versus mixed-effects linear model (`lmer` from the `lme4` library in R, with a random co-efficient for each animal) in an RCT with no effect of treatment. Because there is no effect, we can estimate the Type 1 error rate for each method over a range of parameters.  
+
+Residuals are clustered on animal. Parameters are specified in code. We generate `r n.sims` data sets using Monte Carlo simulation over a range of parameters that are "typical" for experimental neuroscience (small number of animals, large number of (pseudo-) replicates.  
+
+```{r}
+n.replicates <- floor(runif(n.sims, 6, 50)/2)*2 # even number between 6 and 40
+n.pseudo <- sample(c(3:18), n.sims, replace = TRUE)
+sd.error <- 1
+random.assignment = TRUE
+sd.random <- sample(c(0, 0.5, 1, 2), n.sims, replace = TRUE)
+fixed.effects <- 0  # no difference between groups
+
+sims.meta <- data.frame(n.replicates = n.replicates,
+                        n.pseudo = n.pseudo,
+                        sd.error = sd.error,
+                        random.assignment = random.assignment,
+                        sd.random = sd.random,
+                        fixed.effects = fixed.effects)
+
+sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
+
+## let's plot the first of these simulations and compare to the parameters as a sanity check
+# plot.sim(sims[[1L]]) 
+# sims.meta[1,]
+
+
+x <- t(sapply(sims, tests))
+sims.meta$lm <- x[,1]
+sims.meta$lmer <- x[,2]
+save(sims.meta, file = "sims_meta_no_effect_25000.RData")
+
+```
+
+Marginal Type 1 error rate:  
+
+```{r}
+load("sims_meta_no_effect_25000.RData")
+sims.meta %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05))
+```
+
+Type 1 error rate conditioning on variance of random effects:  
+
+```{r}
+sims.meta %>%
+  group_by(sd.random) %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05))
+
+```
+
+Clearly, the mixed model (`lmer`) produces more acceptable Type 1 error rates for these sorts of experiments.  
+
+
+```{r}
+p1 <- plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 1 error rate, lm") +
+  ylim(0, 1)
+p2 <- plot.error.rates(sims.meta, formula("as.numeric(lmer < .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 1 error rate, lmer") +
+  ylim(0, 1)
+p3 <- plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 1 error rate, lm") +
+  ylim(0, 1)
+p4 <- plot.error.rates(sims.meta, formula("as.numeric(lmer < .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 1 error rate, lmer") +
+  ylim(0, 1)
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+`lm` can't distinguish between replicates and pseudoreplicates (at least not the way we have specified the model), so it effectively "sees" `n.pseudo` x `n.replicates` = `n.tot` total replicates.  
+
+```{r}
+sims.meta$n.tot <- sims.meta$n.pseudo*sims.meta$n.replicates
+plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.tot) + sd.random")) + 
+  ylab("Type 1 error rate, lm - total replicates") + 
+  ylim(0, 1)
+
+```
+
+## Type 2 error rates - Randomized controlled trial
+
+We duplicate the parameters of the above experiment, but over a range of effect sizes.  
+
+
+```{r}
+fixed.effects <- sample(c(0.1, 0.5, 1, 2), n.sims, replace = T)
+
+sims.meta <- data.frame(n.replicates = n.replicates,
+                   n.pseudo = n.pseudo,
+                   sd.error = sd.error,
+                   random.assignment = random.assignment,
+                   sd.random = sd.random,
+                   fixed.effects = fixed.effects)
+
+sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
+
+x <- t(sapply(sims, tests))
+sims.meta$lm <- x[,1]
+sims.meta$lmer <- x[,2]
+save(sims.meta, file = "sims_meta_range_effect_25000.RData")
+```
+
+
+Marginal Type 1 error rate:  
+
+```{r}
+load("sims_meta_range_effect_25000.RData")
+sims.meta %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05))
+```
+
+Type 1 error rate conditioning on variance of random effects:  
+
+```{r}
+sims.meta %>%
+  group_by(sd.random) %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05))
+
+```
+
+Type 1 error rate conditioning on fixed effect size:  
+
+```{r}
+sims.meta %>%
+  group_by(fixed.effects) %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05))
+
+```
+
+
+```{r}
+p1 <- plot.error.rates(sims.meta, formula("as.numeric(lm > .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 2 error rate, lm") +
+  ylim(0, 1)
+p2 <- plot.error.rates(sims.meta, formula("as.numeric(lmer > .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 2 error rate, lmer") +
+  ylim(0, 1)
+p3 <- plot.error.rates(sims.meta, formula("as.numeric(lm > .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 2 error rate, lm") +
+  ylim(0, 1)
+p4 <- plot.error.rates(sims.meta, formula("as.numeric(lmer > .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 2 error rate, lmer") +
+  ylim(0, 1)
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
+
+## Type 1 error rates - nested design
+
+```{r}
+n.replicates <- floor(runif(n.sims, 6, 50)/2)*2 # even number between 6 and 40
+n.pseudo <- sample(c(3:18), n.sims, replace = TRUE)
+sd.error <- 1
+random.assignment = FALSE
+sd.random <- sample(c(0.5, 1, 2), n.sims, replace = TRUE)
+fixed.effects <- 0  # no difference between groups
+
+sims.meta <- data.frame(n.replicates = n.replicates,
+                        n.pseudo = n.pseudo,
+                        sd.error = sd.error,
+                        random.assignment = random.assignment,
+                        sd.random = sd.random,
+                        fixed.effects = fixed.effects)
+
+sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
+
+## let's plot the first of these simulations and compare to the parameters as a sanity check
+plot.sim(sims[[2L]]) 
+sims.meta[1,]
+
+x <- t(sapply(sims, function(x) tests(x, nested = TRUE)))
+sims.meta$lm <- x[,1]
+sims.meta$lmer <- x[,2]
+sims.meta$lmer_slope <- x[,3]
+save(sims.meta, file = "sims_meta_no_effect_25000_nested.RData")
+
+```
+
+Marginal Type 1 error rate:  
+
+```{r}
+load("sims_meta_no_effect_25000_nested.RData")
+sims.meta %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05), type1.lmer.slope = mean(lmer_slope < .05))
+```
+
+Type 1 error rate conditioning on variance of random effects:  
+
+```{r}
+sims.meta %>%
+  group_by(sd.random) %>%
+  summarise(type1.lm = mean(lm < .05), type1.lmer = mean(lmer < .05), type1.lmer.slope = mean(lmer_slope < .05))
+
+```
+
+
+
+```{r}
+p1 <- plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 1 error rate, lm") +
+  ylim(0, 1)
+p2 <- plot.error.rates(sims.meta, formula("as.numeric(lmer < .05) ~ s(n.pseudo) + sd.random")) +
+  ylab("Type 1 error rate, lmer") +
+  ylim(0, 1)
+p3 <- plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 1 error rate, lm") +
+  ylim(0, 1)
+p4 <- plot.error.rates(sims.meta, formula("as.numeric(lmer < .05) ~ s(n.replicates) + sd.random")) +
+  ylab("Type 1 error rate, lmer") +
+  ylim(0, 1)
+
+grid.arrange(p1, p2, p3, p4, ncol = 2)
+```
