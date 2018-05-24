@@ -1,0 +1,220 @@
+---
+title: "Pseudoreplication, Type 1 error rate, and power"
+author: "Bindoff, A."
+date: "`r format(Sys.time(), '%d %B %Y')`"
+abstract:  
+  A tutorial on mixed models to control Type 1 and Type 2 error rates in experimental neuroscience.  
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = F, message = F)
+
+# choose a colour-blind friendly pallette 
+ggplot <- function(...) ggplot2::ggplot(...) + scale_colour_viridis(discrete = T, begin = 0.05, end = 0.95) + scale_fill_viridis(discrete = T, end = 0.5)
+
+# for reproducibility
+set.seed(1)
+```
+
+```{r}
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(lme4)
+library(gridExtra)
+library(lmerTest)
+library(viridis)
+library(ggbeeswarm)
+library(purrr)
+library(mgcv)
+
+
+# `expand.grid.df` works like `expand.grid` but enables the user to define paired columns
+# it will return every combination of each argument
+expand.grid.df <- function(...) Reduce(function(...) merge(..., by=NULL), list(...))
+
+# `%nin%` "not in", e.g c("a", "b", "c") %nin% c("a", "c") will return "b"
+`%nin%` <- Negate(`%in%`)
+```
+
+
+```{r}
+# generic plot method
+plot.sim <- function(d){
+  ggplot(d, aes(x = condition, y = y, colour = animal.id, fill = animal.id)) +
+    geom_quasirandom(dodge.width = 1, alpha = 1/2, size = 2) +
+    geom_point(aes(y = y.mean, group = animal.id), colour = "black", size = 4, position = position_dodge(width = 1), shape = 3)
+} 
+```
+
+
+```{r}
+# if sd.error is specified, `sim.mm` will simulate data with 
+# fixed and random effects and their parameters, otherwise
+# a data.frame is returned with y-hat but no residuals
+# if random.assignment = F, will simulate data from a nested (split-plot) design
+# so there will be twice as many observations (need to consider this if estimating
+# the power of two different designs)
+sim.mm <- function(...,
+                   n.replicates = 4,
+                   sd.random = 0.5,
+                   fixed.effects = 0,
+                   n.pseudo = 3,
+                   random.assignment = T,
+                   sd.error = NULL){
+  animals <- data.frame(animal.id = as.factor(seq(n.replicates)),
+                        random.effect = rnorm(n.replicates, 0, sd.random))
+  conditions <- data.frame(condition = c("contr", "exp"),
+                           fixed.effect = c(0,fixed.effects))
+  pseudoreplicate <- data.frame(pseudoreplicate = c(1:n.pseudo))
+  d <- expand.grid.df(pseudoreplicate, animals, conditions)
+  if(random.assignment){
+    i <- sample(unique(d$animal.id), n.replicates/2, replace = FALSE)
+    d %<>% filter(xor(animal.id %nin% i, condition == "exp"))
+  }
+  d %<>% mutate(y.hat = random.effect + fixed.effect)
+  if(!is.null(sd.error)){
+    d %<>% mutate(y = y.hat + rnorm(nrow(d), 0, sd.error)) %>%
+      group_by(animal.id, condition) %>%
+      mutate(y.mean = mean(y))
+  }
+  d
+}
+
+# example
+# plot.sim(sim.mm(n.replicates = 8, n.pseudo = 5, sd.error = 1/2, sd.random = 1, fixed.effects = 2))
+```
+
+
+```{r}
+tests <- function(x, nested = FALSE){
+  m1 <- anova(lm(y ~ condition, data = x))
+  m2 <- anova(lmer(y ~ condition + (1|animal.id), data = x))
+  m3 <- m2
+  if(nested){
+    m3 <- tryCatch({anova(lmer(y ~ condition + (condition|animal.id), data = x))}, warning = function(war){
+      m3$`Pr(>F)` <- 1
+      return(m3)})
+  }
+  return(cbind(m1$`Pr(>F)`[1], m2$`Pr(>F)`, m3$`Pr(>F)`))
+}
+```
+
+
+```{r}
+plot.error.rates <- function(data, model){
+  m <- gam(model, data = data)
+  k <- apply(m$model, 2, unique)
+  d <- expand.grid(k[2:length(k)])
+  d$fit <- predict(m, d)
+  d[,1] <- factor(d[,1])
+  p <- ggplot(d, aes_string(x = names(d[2]), y = "fit", colour = names(d[1]))) +
+    geom_line(size = 1) +
+    geom_hline(yintercept = .05, linetype = "dotted")
+}
+
+n.sims <- 25000
+```
+
+# Design of experiments
+
+blah blah RCT vs nested designs
+
+## Type 1 vs Type 2 errors
+
+blah blah explain what these are in very simple terms
+
+## Pseudoreplication
+
+blah blah definition of pseudoreplication -> inflated Type 1 error if not handled correctly
+
+## How mixed models deal with pseudoreplication
+
+blah blah what the mixed model does
+
+## A graphical explanation of what a mixed model does
+
+Experimental design:  assume experiment with 3 animals. Twelve tissue samples are taken from each animal, and a treatment applied to six of these samples. The aim is to measure the effect of the treatment. This is a fully nested design, because tissues from each animal are in both control and experimental groups. Because of this, it's easy to partition the variance attributable to the random effect (animal), integrate it out, leaving us with the variance attributable to the effect of experimental treatment.  
+
+Let's imagine that we step into another universe, and repeat the experiment with the equivalent animals. However, this time there is a lot more variance (see Figure 1). Just looking at Figure 1, and assuming there is an effect of treatment, which experiment do you have more faith in?  
+
+
+```{r}
+set.seed(2)
+sim.mm2 <- function(replicates = 6, treatment = 0.5, sd1 = 0.5, sd2 = 1){
+  replicates <- 2*(floor(replicates/2))
+  replicate1 <- c(1:floor(replicates/2))
+  replicate2 <- c((floor(replicates/2)+1):replicates) 
+  d1 <- expand.grid(animalid  = c(-0.5, 0.1, 0.4),
+                    treatment = c(0, treatment),
+                    replicate = replicate1)
+  d2 <- expand.grid(animalid  = c(-0.5, 0.1, 0.4),
+                    treatment = c(0, treatment),
+                    replicate = replicate2)
+  # smaller effect sizes (random and fixed)
+  small.noise <- abs(rnorm(nrow(d1), 0, sd1))
+  d1$y1 <- 0.5*d1$treatment + d1$animalid + small.noise
+  d2$y1 <- 0.5*d2$treatment + d2$animalid - small.noise
+  # larger effect sizes (random and fixed)
+  large.noise <- abs(rnorm(nrow(d1), 0, sd2))
+  d1$y2 <- 0.5*d1$treatment + d1$animalid + large.noise
+  d2$y2 <- 0.5*d2$treatment + d2$animalid - large.noise
+  
+  d <- bind_rows(d1, d2)
+  
+  
+  d$animalid %<>% factor(labels = c("01", "02", "03"))
+  d$treatment %<>% factor(labels = c("a", "b"))
+  d %<>% group_by(treatment, animalid) %>% mutate(y1mean = mean(y1), y2mean = mean(y2))
+  d
+}
+
+
+
+
+plot.sim2 <- function(d){
+  p1 <- ggplot(d, aes(x = treatment, y = y1, colour = animalid, fill = animalid)) +
+    geom_quasirandom(dodge.width = 1, alpha = 1/3) +
+    geom_point(aes(y = y1mean, group = animalid), colour = "black", size = 4, position = position_dodge(width = 1), shape = 3) +
+    ylim(-3, 3)
+  p2 <- ggplot(d, aes(x = treatment, y = y2, colour = animalid)) +
+    geom_quasirandom(dodge.width = 1, alpha = 1/3) +
+    geom_point(aes(y = y2mean, group = animalid), colour = "black", size = 4, position = position_dodge(width = 1), shape = 3) +
+    ylim(-3, 3)
+
+  grid.arrange(p1, p2, ncol = 2)
+}
+
+d <- sim.mm2()
+plot.sim2(d)
+```
+
+The means for each animal and each group are the same for each experiment, but should we have the same confidence that the observed mean differences are not due to chance?  
+
+```{r}
+m1 <- lmer(y1 ~ treatment + (treatment|animalid), data = d)
+#ranef(m1)
+#fixef(m1)  # so far, so good
+
+# y2
+m2 <- lmer(y2 ~ treatment + (treatment|animalid), data = d)
+
+#ranef(m2)
+#fixef(m2)  # obviously not as good as y1, but not terrible
+
+anova(m1)
+anova(m2)  
+
+# what happens if we don't account for random effect?
+# y1
+m3 <- lm(y1 ~ treatment, data = d)
+#coef(m3)
+
+# y2
+m4 <- lm(y2 ~ treatment, data = d)
+#coef(m4)
+
+anova(m3)
+anova(m4)
+```
