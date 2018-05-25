@@ -382,12 +382,11 @@ save(sims.meta, file = "sims_meta_no_effect_25000_nested.RData")
 
 ```{r, echo = F}
 # quickly generate a similar dataset to make the plot below which shows the design fairly clearly
-n.sims <- 10
-n.replicates <- floor(runif(n.sims, 6, 12)/2)*2 # even number between 6 and 40
-n.pseudo <- sample(c(3:6), n.sims, replace = TRUE)
+n.replicates <- floor(runif(6, 6, 12)/2)*2 # even number between 6 and 40
+n.pseudo <- sample(c(3:6), 6, replace = TRUE)
 sd.error <- 1
 random.assignment = FALSE
-sd.random <- sample(c(0.5, 1, 2), n.sims, replace = TRUE)
+sd.random <- sample(c(0.5, 1, 2), 6, replace = TRUE)
 fixed.effects <- 0  # no difference between groups
 
 sims.meta <- data.frame(n.replicates = n.replicates,
@@ -398,7 +397,6 @@ sims.meta <- data.frame(n.replicates = n.replicates,
                         fixed.effects = fixed.effects)
 
 sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from each row of sims.meta
-n.sims <- 25000
 ```
 
 ```{r}
