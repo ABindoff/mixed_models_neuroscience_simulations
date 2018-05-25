@@ -52,6 +52,14 @@ plot.sim <- function(d){
     geom_quasirandom(dodge.width = 1, alpha = 1/2, size = 2) +
     geom_point(aes(y = y.mean, group = animal.id), colour = "black", size = 4, position = position_dodge(width = 1), shape = 3)
 } 
+
+# method for extracting a legend to use in grid.arrange
+get_legend<-function(myggplot){
+    tmp <- ggplot_gtable(ggplot_build(myggplot))
+    leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+    legend <- tmp$grobs[[leg]]
+    return(legend)
+    }
 ```
 
 ### Simulation method  
@@ -99,17 +107,22 @@ sim.mm <- function(...,
 
 p-values for mixed models use Satterthwaite approximation, implemented in the `lmerTest` package. Where the random intercept + random co-efficient model failed to converge, the returned p-value was 1. This is a arguably a methodological flaw, because in practice the analyst may utilise a different optimiser.  
 
+
+
 ```{r}
+
 tests <- function(x, nested = FALSE){
-  m1 <- anova(lm(y ~ condition, data = x))
-  m2 <- anova(lmer(y ~ condition + (1|animal.id), data = x))
+  m1 <- anova(k <- lm(y ~ condition, data = x))
+  m1$effect_size <- diff(coef(k))/sd(resid(k))
+  m2 <- anova(k <- lmer(y ~ condition + (1|animal.id), data = x))
+  m2$effect_size <- diff(fixef(k))/sd(resid(k))
   m3 <- m2
   if(nested){
     m3 <- tryCatch({anova(lmer(y ~ condition + (condition|animal.id), data = x))}, warning = function(war){
       m3$`Pr(>F)` <- 1
       return(m3)})
   }
-  return(cbind(m1$`Pr(>F)`[1], m2$`Pr(>F)`, m3$`Pr(>F)`))
+  return(cbind(m1$`Pr(>F)`[1], m2$`Pr(>F)`, m3$`Pr(>F)`, m1$effect_size[1], m2$effect_size))
 }
 ```
 
@@ -127,7 +140,7 @@ plot.error.rates <- function(data, model){
     geom_hline(yintercept = .05, linetype = "dotted")
 }
 
-n.sims <- 25000
+n.sims <- 500
 ```
 
 # Type 1 error rates - Randomized controlled trial
@@ -146,7 +159,7 @@ fixed.effects <- 0  # no difference between groups
 ```
 
 
-```{r, eval = F}
+```{r, eval = T}
 sims.meta <- data.frame(n.replicates = n.replicates,
                         n.pseudo = n.pseudo,
                         sd.error = sd.error,
@@ -164,6 +177,8 @@ sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from ea
 x <- t(sapply(sims, tests))
 sims.meta$lm <- x[,1]
 sims.meta$lmer <- x[,2]
+sims.meta$lm.d <- x[,4] - sims.meta$fixed.effects
+sims.meta$lmer.d <- x[,5] - sims.meta$fixed.effects
 save(sims.meta, file = "sims_meta_no_effect_25000.RData")
 
 ```
@@ -215,11 +230,30 @@ plot.error.rates(sims.meta, formula("as.numeric(lm < .05) ~ s(n.tot) + sd.random
 
 ```
 
+Pilot studies are often used to estimate effect sizes. Knowing something about the variance of the random effects and the residual errors can tell us something about how reliable our estimated effect sizes might be.  
+
+
+```{r}
+p1 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lm.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lm.d - true effect")
+p2 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lmer.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lmer.d - true effect")
+p_leg <- get_legend(p2 + geom_point(alpha = 4/5) + theme(legend.position = "bottom"))
+grid.arrange(p1, p2, p_leg, layout_matrix = rbind(c(1,2), c(3)))
+```
+
+
 # Type 2 error rates - Randomized controlled trial
 
 We duplicate the parameters of the above experiment, but over a range of effect sizes. This enables an estimate of Type 2 error rates.  
 
-```{r, eval = F}
+```{r, eval = T}
 fixed.effects <- sample(c(0.1, 0.5, 1, 2), n.sims, replace = T)
 
 sims.meta <- data.frame(n.replicates = n.replicates,
@@ -234,6 +268,8 @@ sims <- pmap(sims.meta, sim.mm)  # simulates a data-set using parameters from ea
 x <- t(sapply(sims, tests))
 sims.meta$lm <- x[,1]
 sims.meta$lmer <- x[,2]
+sims.meta$lm.d <- x[,4] - sims.meta$fixed.effects
+sims.meta$lmer.d <- x[,5] - sims.meta$fixed.effects
 save(sims.meta, file = "sims_meta_range_effect_25000.RData")
 ```
 
@@ -299,10 +335,25 @@ p4 <- plot.error.rates(sims.meta, formula("as.numeric(lmer > .05) ~ s(n.replicat
 grid.arrange(p1, p2, p3, p4, ncol = 2)
 ```
 
+```{r}
+p1 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lm.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lm.d - true effect")
+p2 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lmer.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lmer.d - true effect")
+p_leg <- get_legend(p2 + geom_point(alpha = 4/5) + theme(legend.position = "bottom"))
+grid.arrange(p1, p2, p_leg, layout_matrix = rbind(c(1,2), c(3)))
+```
+
 
 # Type 1 error rates - nested design
 
-```{r, eval = F}
+```{r, eval = T}
 n.replicates <- floor(runif(n.sims, 6, 50)/2)*2 # even number between 6 and 40
 n.pseudo <- sample(c(3:18), n.sims, replace = TRUE)
 sd.error <- 1
@@ -323,6 +374,8 @@ x <- t(sapply(sims, function(x) tests(x, nested = TRUE)))
 sims.meta$lm <- x[,1]
 sims.meta$lmer <- x[,2]
 sims.meta$lmer_slope <- x[,3]
+sims.meta$lm.d <- x[,4] - sims.meta$fixed.effects
+sims.meta$lmer.d <- x[,5] - sims.meta$fixed.effects
 save(sims.meta, file = "sims_meta_no_effect_25000_nested.RData")
 
 ```
@@ -397,9 +450,24 @@ p6 <- plot.error.rates(sims.meta, formula("as.numeric(lmer_slope < .05) ~ s(n.re
 grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 3)
 ```
 
+```{r}
+p1 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lm.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lm.d - true effect")
+p2 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lmer.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lmer.d - true effect")
+p_leg <- get_legend(p2 + geom_point(alpha = 4/5) + theme(legend.position = "bottom"))
+grid.arrange(p1, p2, p_leg, layout_matrix = rbind(c(1,2), c(3)))
+```
+
 # Type 2 error rates - nested design
 
-```{r, eval = F}
+```{r, eval = T}
 fixed.effects <- sample(c(0.1, 0.5, 1, 2), n.sims, replace = T)
 
 n.replicates <- floor(runif(n.sims, 6, 50)/2)*2 # even number between 6 and 40
@@ -421,6 +489,8 @@ x <- t(sapply(sims, function(x) tests(x, nested = TRUE)))
 sims.meta$lm <- x[,1]
 sims.meta$lmer <- x[,2]
 sims.meta$lmer_slope <- x[,3]
+sims.meta$lm.d <- x[,4] - sims.meta$fixed.effects
+sims.meta$lmer.d <- x[,5] - sims.meta$fixed.effects
 save(sims.meta, file = "sims_meta_range_effect_25000_nested.RData")
 
 ```
@@ -497,4 +567,19 @@ p6 <- plot.error.rates(sims.meta, formula("as.numeric(lmer_slope > .05) ~ s(n.re
   ylim(0, 1)
 
 grid.arrange(p1, p2, p3, p4, p5, p6, ncol = 3)
+```
+
+```{r}
+p1 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lm.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lm.d - true effect")
+p2 <- ggplot(sims.meta, aes(x = factor(fixed.effects), y = lmer.d, colour = factor(sd.random))) +
+  geom_quasirandom(dodge.width = 1/2, alpha = 1/5, size = 2) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  theme(legend.position = "none") +
+  ylab("lmer.d - true effect")
+p_leg <- get_legend(p2 + geom_point(alpha = 4/5) + theme(legend.position = "bottom"))
+grid.arrange(p1, p2, p_leg, layout_matrix = rbind(c(1,2), c(3)))
 ```
