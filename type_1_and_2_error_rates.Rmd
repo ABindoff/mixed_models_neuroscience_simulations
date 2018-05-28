@@ -140,7 +140,7 @@ plot.error.rates <- function(data, model){
     geom_hline(yintercept = .05, linetype = "dotted")
 }
 
-n.sims <- 500
+n.sims <- 25000
 ```
 
 # Type 1 error rates - Randomized controlled trial
